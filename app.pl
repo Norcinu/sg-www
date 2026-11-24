@@ -5,6 +5,10 @@ use Mojo::JSON qw(decode_json encode_json);
 use Time::Piece;
 use Time::Seconds qw(ONE_DAY);
 
+my $config = plugin 'Config' => {file => path(__FILE__)->sibling('app.conf')};
+app->secrets($config->{secrets});
+app->sessions->secure(1) if app->mode eq 'production';
+
 my $STATE_FILE     = path(__FILE__)->sibling('countdown_state.json');
 my $BASE_DAYS      = 21; # 3 weeks
 my $EXTEND_DAYS    = 7;  # 1 week per extension
@@ -45,9 +49,9 @@ get '/' => sub ($c) {
     my $days_remaining    = $total_target_days - $days_passed;
     $days_remaining       = 0 if $days_remaining < 0;
 
-    my $is_due          = ($days_passed >= $total_target_days);
-    my $can_extend      = ($state->{extensions} < $MAX_EXTENSIONS);
-    my $hard_stopped    = ($is_due && !$can_extend && !$state->{completed});
+    my $is_due       = ($days_passed >= $total_target_days);
+    my $can_extend   = ($state->{extensions} < $MAX_EXTENSIONS);
+    my $hard_stopped = ($is_due && !$can_extend && !$state->{completed});
 
     $c->stash(
         start_date        => $start->ymd,
@@ -64,6 +68,15 @@ get '/' => sub ($c) {
     );
 
     $c->render(template => 'index');
+};
+
+# Validate CSRF token for all state-changing POST routes
+under sub ($c) {
+    my $v = $c->validation;
+    return 1 unless $v->csrf_protect->has_error('csrf_token');
+
+    $c->render(text => 'Bad CSRF token!', status => 403);
+    return undef;
 };
 
 post '/complete' => sub ($c) {
@@ -168,10 +181,12 @@ __DATA__
       <p><strong>Time is up!</strong> Mark as completed or extend by 1 week.</p>
       <div class="actions">
         <form method="post" action="/complete">
+          %= csrf_field
           <button type="submit" class="btn-complete">Completed</button>
         </form>
         % if ($can_extend) {
           <form method="post" action="/extend">
+            %= csrf_field
             <button type="submit" class="btn-extend">Extend (+1 Week)</button>
           </form>
         % }
@@ -182,6 +197,7 @@ __DATA__
   </div>
 
   <form method="post" action="/reset">
+    %= csrf_field
     <button type="submit" class="btn-reset">Reset Countdown</button>
   </form>
 </body>
